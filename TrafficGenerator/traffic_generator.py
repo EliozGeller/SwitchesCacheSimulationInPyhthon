@@ -8,7 +8,7 @@ separate trace folders for easy management of multiple runs.
 
 Outputs under TRACE_DIR (default "traces/trace_1"):
 - traffic.csv: metadata of this trace (parameters, NUM_OF_TORS, etc.) plus flow list
-- trace.csv: packet streams across all ToRs in side-by-side columns
+- trace.csv: packet streams across all ToRs in a sorted list
 - plots/*.png: rate distribution visualizations
 All timestamps in seconds.
 """
@@ -185,7 +185,8 @@ if HAS_PLOTTING:
         plt.figure()
         plt.plot(x, pdf, label='Theory')
         plt.scatter([MAX_RATE], [tail], color='k', s=50, label='Mass@MAX')
-        plt.xscale('log'); plt.yscale('log'); plt.xlabel('Rate (bps)'); plt.ylabel('PDF'); plt.legend(); plt.grid(True, which='both', ls='--', lw=0.5)
+        plt.xscale('log'); plt.yscale('log')
+        plt.xlabel('Rate (bps)'); plt.ylabel('PDF'); plt.legend(); plt.grid(True, which='both', ls='--', lw=0.5)
         fn = os.path.join(PLOT_DIR, 'rate_pdf.png'); plt.savefig(fn, bbox_inches='tight'); plt.close(); print(f"[*] Saved {fn}")
 else:
     def plot_rate_histogram(*a,**k): print("[*] Plot disabled")
@@ -213,7 +214,7 @@ def write_traffic():
             ('TARGET_BITRATE', TARGET_BITRATE),
             ('MEAN_INTERARRIVAL', MEAN_INTERARRIVAL),
             ('APP_MIX', '0.5-0.5'),
-            ('APP_B_RANGE', f"{DEST_RANGE_B[0]}-{DEST_RANGE_B[1]}"),
+            ('APP_B_RANGE', f"[{DEST_RANGE_B[0]}, {DEST_RANGE_B[1]}]"),
             ('SIZE_DISTRIBUTION', os.path.basename(SIZE_CDF_CSV)),
         ]
         for param in meta:
@@ -224,39 +225,35 @@ def write_traffic():
             w.writerow([fl.tor_id, f"{fl.start_time:.6f}", fl.size, f"{fl.rate:.2f}", fl.destination, fl.type])
     print(f"[*] Saved traffic data to {TRAFFIC_CSV}")
 
-# Write trace.csv with side-by-side packet columns
+# Write trace.csv as a single sorted list of all packets across ToRs
 def write_trace():
-    per_tor_pkts, max_len = [], 0
+    # Collect all packets from all ToRs
+    all_packets = []  # list of (timestamp, destination, tor_id)
     for tor in range(1, NUM_OF_TORS+1):
-        pkts = []
         for fl in tor_flows[tor]:
-            n = math.ceil(fl.size / PACKET_BYTES)
+            num_pkts = math.ceil(fl.size / PACKET_BYTES)
             interval = (PACKET_BYTES * 8.0) / fl.rate
             t = fl.start_time
-            for _ in range(n):
+            for _ in range(num_pkts):
                 t += random.expovariate(1.0 / interval)
-                pkts.append((f"{t:.6f}", str(fl.destination)))
-        per_tor_pkts.append(pkts)
-        max_len = max(max_len, len(pkts))
+                all_packets.append((t, fl.destination, tor))
+    # Sort all packets by timestamp
+    all_packets.sort(key=lambda x: x[0])
+    # Write to CSV
     with open(TRACE_CSV, 'w', newline='') as f:
         w = csv.writer(f)
-        header = []
-        for i in range(1, NUM_OF_TORS+1):
-            header += [f"ToR {i} timestamp_s", f"ToR {i} destination"]
-        w.writerow(header)
-        for row in range(max_len):
-            line = []
-            for pkts in per_tor_pkts:
-                if row < len(pkts):
-                    line += [pkts[row][0], pkts[row][1]]
-                else:
-                    line += ['', '']
-            w.writerow(line)
+        w.writerow(['timestamp_s', 'destination', 'tor_id'])
+        for ts, dest, tor in all_packets:
+            w.writerow([f"{ts:.6f}", dest, tor])
     print(f"[*] Saved packet trace to {TRACE_CSV}")
 
 # Execute all
-write_traffic()
-write_trace()
-if HAS_PLOTTING:
-    plot_rate_histogram()
-    plot_rate_pdf()
+def main():
+    write_traffic()
+    write_trace()
+    if HAS_PLOTTING:
+        plot_rate_histogram()
+        plot_rate_pdf()
+
+if __name__ == '__main__':
+    main()
